@@ -1,0 +1,10 @@
+docling
+chromadb
+neo4j
+apoc
+ollama
+sentence-transformers
+fastapi
+instructor
+networkx
+ragas
