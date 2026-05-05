@@ -5,6 +5,7 @@ apoc
 ollama
 sentence-transformers
 fastapi
+uvicorn
 instructor
 networkx
 ragas
