@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>RAGplusplus — Demo</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main>
+      <h1>RAGplusplus — Demo</h1>
+
+      <section class="card">
+        <h2>Upload PDF</h2>
+        <input id="pdf-file" type="file" accept="application/pdf" />
+        <button id="upload-btn">Upload & Index</button>
+        <pre id="upload-result" class="output"></pre>
+      </section>
+
+      <section class="card">
+        <h2>Query PDFs</h2>
+        <input id="query-input" placeholder="Ask about uploaded PDFs" />
+        <input id="source-input" placeholder="Optional source filename" />
+        <button id="query-btn">Query</button>
+        <pre id="query-result" class="output"></pre>
+      </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

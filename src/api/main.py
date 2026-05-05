@@ -8,6 +8,9 @@ from fastapi import UploadFile, File
 from pydantic import BaseModel, Field
 
 from src.retrieval.orchestrator import RetrievalOrchestrator, build_default_orchestrator
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+from pathlib import Path
 
 
 class QueryRequest(BaseModel):
@@ -38,6 +41,18 @@ def create_app(orchestrator: Optional[RetrievalOrchestrator] = None) -> FastAPI:
             close_graph()
 
     app = FastAPI(title="CiteCheck Pro API", version="0.1.0", lifespan=lifespan)
+
+    # mount static frontend
+    frontend_dir = Path(__file__).resolve().parents[2] / "frontend"
+    if frontend_dir.exists():
+        app.mount("/static", StaticFiles(directory=str(frontend_dir)), name="static")
+
+    @app.get("/", include_in_schema=False)
+    def root_index():
+        index_file = frontend_dir / "index.html"
+        if index_file.exists():
+            return FileResponse(str(index_file))
+        return {"status": "ok"}
 
     @app.get("/status")
     def status() -> dict[str, str]:
