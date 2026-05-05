@@ -30,9 +30,9 @@ class EnsembleRetriever:
             raise ValueError("An embedding model is required for vector retrieval")
         return self.embedder.embed([query])[0]
 
-    def _vector_hits(self, query: str, top_k: int) -> List[RetrievalHit]:
+    def _vector_hits(self, query: str, top_k: int, metadata_filter: dict | None = None) -> List[RetrievalHit]:
         query_embedding = self._embed_query(query)
-        raw_hits = self.vector_repo.search(query_embedding, top_k=top_k)
+        raw_hits = self.vector_repo.search(query_embedding, top_k=top_k, metadata_filter=metadata_filter)
         hits: List[RetrievalHit] = []
         for item_id, distance, metadata, document in raw_hits:
             score = 1.0 / (1.0 + float(distance))
@@ -121,9 +121,9 @@ class EnsembleRetriever:
                 merged[key] = hit
         return sorted(merged.values(), key=lambda item: item.score, reverse=True)
 
-    def retrieve(self, query: str, top_k: int = 5, vector_top_k: Optional[int] = None, graph_top_k: Optional[int] = None) -> List[RetrievalHit]:
+    def retrieve(self, query: str, top_k: int = 5, vector_top_k: Optional[int] = None, graph_top_k: Optional[int] = None, metadata_filter: dict | None = None) -> List[RetrievalHit]:
         vector_top_k = vector_top_k or top_k
         graph_top_k = graph_top_k or top_k
-        vector_hits = self._vector_hits(query, top_k=vector_top_k)
+        vector_hits = self._vector_hits(query, top_k=vector_top_k, metadata_filter=metadata_filter)
         graph_hits = self._graph_hits(query, top_k=graph_top_k)
         return self._merge_hits([*vector_hits, *graph_hits])[:top_k]

@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from typing import Any, Optional
 
 from fastapi import FastAPI, HTTPException
+from fastapi import UploadFile, File
 from pydantic import BaseModel, Field
 
 from src.retrieval.orchestrator import RetrievalOrchestrator, build_default_orchestrator
@@ -55,6 +56,91 @@ def create_app(orchestrator: Optional[RetrievalOrchestrator] = None) -> FastAPI:
             prompt=result.prompt,
             citations=result.citations,
             hits=[hit.to_dict() for hit in result.hits],
+        )
+
+    class UploadResponse(BaseModel):
+        source: str
+        ids: list[str]
+
+    @app.post('/upload_pdf', response_model=UploadResponse)
+    async def upload_pdf(file: UploadFile = File(...)) -> UploadResponse:
+        """Upload a PDF, parse -> convert -> index into vector store. Returns stored ids."""
+        active_orchestrator = getattr(app.state, 'orchestrator', None)
+        if active_orchestrator is None:
+            raise HTTPException(status_code=500, detail='Retrieval orchestrator is not available')
+
+        # save upload to temp file
+        import tempfile
+        from pathlib import Path
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
+        content = await file.read()
+        tmp.write(content)
+        tmp.flush()
+        tmp.close()
+        tmp_path = Path(tmp.name)
+
+        # parse PDF -> markdown
+        markdown = None
+        try:
+            from src.ingestion.parsers.docling_parser import DoclingParser
+            from src.ingestion.parsers.markdown_converter import MarkdownConverter
+            parser = DoclingParser(use_ocr=False)
+            parsed = parser.parse(tmp_path)
+            converter = MarkdownConverter()
+            converted = converter.convert(parsed, source_path=str(file.filename))
+            markdown = converted.markdown_content
+            source_name = converted.source or file.filename
+        except Exception:
+            # fallback using PyPDF2 if Docling unavailable
+            try:
+                from PyPDF2 import PdfReader
+                reader = PdfReader(str(tmp_path))
+                pages = [p.extract_text() or '' for p in reader.pages]
+                markdown = '\n\n'.join(pages)
+                source_name = file.filename
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f'PDF parsing failed: {e}')
+
+        # index into vector repo
+        repo = getattr(active_orchestrator, 'vector_repo', None)
+        embedder = getattr(active_orchestrator, 'embedder', None)
+        if repo is None or embedder is None:
+            raise HTTPException(status_code=500, detail='Orchestrator missing required components')
+
+        from src.services.vector_indexer import index_markdown
+        ids = index_markdown(markdown, repo, model=embedder, source=source_name)
+
+        return UploadResponse(source=source_name, ids=ids)
+
+    class QueryPDFRequest(BaseModel):
+        query: str = Field(..., min_length=1)
+        top_k: int = Field(default=5, ge=1, le=20)
+        source: Optional[str] = None
+
+    @app.post('/query_pdf', response_model=QueryResponse)
+    def query_pdf(request: QueryPDFRequest) -> QueryResponse:
+        active_orchestrator = getattr(app.state, 'orchestrator', None)
+        if active_orchestrator is None:
+            raise HTTPException(status_code=500, detail='Retrieval orchestrator is not available')
+
+        # use retriever with optional metadata filter
+        retriever = getattr(active_orchestrator, 'retriever')
+        reranker = getattr(active_orchestrator, 'reranker')
+        prompt_builder = getattr(active_orchestrator, 'prompt_builder')
+        llm_client = getattr(active_orchestrator, 'llm_client')
+
+        metadata_filter = {'source': request.source} if request.source else None
+        hits = retriever.retrieve(request.query, top_k=request.top_k, metadata_filter=metadata_filter)
+        reranked = reranker.rerank(request.query, hits, top_k=request.top_k)
+        built = prompt_builder.build(request.query, reranked)
+        answer = llm_client.generate(built.prompt)
+
+        return QueryResponse(
+            query=request.query,
+            answer=answer,
+            prompt=built.prompt,
+            citations=built.citations,
+            hits=[h.to_dict() for h in reranked],
         )
 
     return app

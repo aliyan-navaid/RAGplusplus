@@ -5,7 +5,7 @@ from .text_splitter import split_markdown_by_words
 from .embeddings import EmbeddingModel
 
 
-def index_markdown(markdown: str, repo, chunk_size_words: int = 400, overlap_words: int = 50, model: EmbeddingModel = None) -> List[str]:
+def index_markdown(markdown: str, repo, chunk_size_words: int = 400, overlap_words: int = 50, model: EmbeddingModel = None, source: str | None = None) -> List[str]:
     """Split markdown, embed chunks, and store into a vector repository.
 
     repo: instance of VectorRepository
@@ -22,11 +22,14 @@ def index_markdown(markdown: str, repo, chunk_size_words: int = 400, overlap_wor
     docs = []
     for c, emb in zip(chunks, embeddings):
         doc_id = str(uuid.uuid4())
+        meta = dict(c.get('meta', {}) or {})
+        if source:
+            meta['source'] = source
         docs.append({
             'id': doc_id,
             'text': c['text'],
             'embedding': emb,
-            'metadata': c.get('meta', {})
+            'metadata': meta
         })
 
     return repo.add_documents(docs)

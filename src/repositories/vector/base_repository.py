@@ -16,5 +16,12 @@ class VectorRepository:
         raise NotImplementedError()
 
     def search(self, query_embedding, top_k: int = 5):
-        """Search the vector store by embedding. Returns list of (id, score, metadata, text)."""
+        """Search the vector store by embedding.
+
+        Args:
+            query_embedding: embedding vector for query
+            top_k: number of results to return
+            metadata_filter: optional dict of metadata to filter results (exact match)
+
+        Returns list of (id, score, metadata, text)."""
         raise NotImplementedError()

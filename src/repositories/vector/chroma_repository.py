@@ -45,10 +45,19 @@ class ChromaVectorRepository(VectorRepository):
         self._col.add(ids=ids, documents=documents, metadatas=metadatas, embeddings=embeddings)
         return ids
 
-    def search(self, query_embedding, top_k: int = 5) -> List[Tuple[str, float, Dict[str, Any], str]]:
+    def search(self, query_embedding, top_k: int = 5, metadata_filter: dict | None = None) -> List[Tuple[str, float, Dict[str, Any], str]]:
         # Chroma returns lists under keys; query expects list of embeddings
         # note: 'ids' is not a valid include value for some chroma versions
-        res = self._col.query(query_embeddings=[query_embedding], n_results=top_k, include=["metadatas", "documents", "distances"])
+        try:
+            # If metadata_filter is provided, try to pass it as 'where' (supported in newer chroma)
+            if metadata_filter:
+                res = self._col.query(query_embeddings=[query_embedding], n_results=top_k, include=["metadatas", "documents", "distances"], where=metadata_filter)
+            else:
+                res = self._col.query(query_embeddings=[query_embedding], n_results=top_k, include=["metadatas", "documents", "distances"])
+        except TypeError:
+            # Older chroma versions may not support 'where' argument; fall back to post-filtering
+            res = self._col.query(query_embeddings=[query_embedding], n_results=top_k, include=["metadatas", "documents", "distances"])
+
         ids = res.get('ids', [[]])[0]
         docs = res.get('documents', [[]])[0]
         metas = res.get('metadatas', [[]])[0]
@@ -57,4 +66,19 @@ class ChromaVectorRepository(VectorRepository):
         out: List[Tuple[str, float, Dict[str, Any], str]] = []
         for _id, dist, meta, doc in zip(ids, dists, metas, docs):
             out.append((_id, float(dist), meta, doc))
+
+        # If we had to fallback (or chroma didn't filter), apply metadata_filter locally
+        if metadata_filter and out:
+            filtered = []
+            for item in out:
+                meta = item[2] or {}
+                ok = True
+                for k, v in metadata_filter.items():
+                    if meta.get(k) != v:
+                        ok = False
+                        break
+                if ok:
+                    filtered.append(item)
+            return filtered[:top_k]
+
         return out
