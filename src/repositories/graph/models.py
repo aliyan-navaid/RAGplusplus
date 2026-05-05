@@ -22,8 +22,14 @@ class DocumentNode:
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for Neo4j."""
         data = asdict(self)
-        # Filter out None values and empty dicts (Neo4j doesn't allow nested maps)
-        return {k: v for k, v in data.items() if v is not None and not (isinstance(v, dict) and not v)}
+        # Extract metadata and flatten it into top-level properties
+        metadata = data.pop("metadata", {})
+        result = {k: v for k, v in data.items() if v is not None and v != ""}
+        # Flatten metadata into top-level properties (only primitives)
+        for k, v in metadata.items():
+            if isinstance(v, (str, int, float, bool, list)):
+                result[k] = v
+        return result
 
 
 @dataclass
@@ -40,8 +46,14 @@ class ChunkNode:
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for Neo4j."""
         data = asdict(self)
-        # Filter out None values and empty dicts (Neo4j doesn't allow nested maps)
-        return {k: v for k, v in data.items() if v is not None and not (isinstance(v, dict) and not v)}
+        # Extract metadata and flatten it into top-level properties
+        metadata = data.pop("metadata", {})
+        result = {k: v for k, v in data.items() if v is not None and v != ""}
+        # Flatten metadata into top-level properties (only primitives)
+        for k, v in metadata.items():
+            if isinstance(v, (str, int, float, bool, list)):
+                result[k] = v
+        return result
 
 
 @dataclass
@@ -56,8 +68,14 @@ class EntityNode:
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for Neo4j."""
         data = asdict(self)
-        # Filter out None values and empty dicts (Neo4j doesn't allow nested maps)
-        return {k: v for k, v in data.items() if v is not None and not (isinstance(v, dict) and not v)}
+        # Extract metadata and flatten it into top-level properties
+        metadata = data.pop("metadata", {})
+        result = {k: v for k, v in data.items() if v is not None and v != ""}
+        # Flatten metadata into top-level properties (only primitives)
+        for k, v in metadata.items():
+            if isinstance(v, (str, int, float, bool, list)):
+                result[k] = v
+        return result
 
 
 @dataclass
