@@ -140,10 +140,61 @@ def create_app(orchestrator: Optional[RetrievalOrchestrator] = None) -> FastAPI:
         if active_orchestrator is None:
             raise HTTPException(status_code=500, detail='Retrieval orchestrator is not available')
 
-        try:
-            payload = await req.json()
-        except Exception:
-            raise HTTPException(status_code=422, detail='Invalid or missing JSON body')
+        # Robust payload parsing: try JSON, then form, then attempt to sanitize JS-like payloads
+        import json
+        import re
+
+        async def _parse_payload(req_obj):
+            # 1) try JSON
+            try:
+                p = await req_obj.json()
+                return p
+            except Exception:
+                pass
+
+            # 2) try form data
+            try:
+                form = await req_obj.form()
+                # convert form keys to dict
+                return dict(form)
+            except Exception:
+                pass
+
+            # 3) read raw body and try to coerce into JSON
+            try:
+                raw = await req_obj.body()
+                raw_text = raw.decode('utf-8', errors='replace').strip()
+            except Exception:
+                raw_text = ''
+
+            if not raw_text:
+                return None
+
+            # common relaxations: single quotes -> double quotes
+            candidate = raw_text
+            candidate = candidate.replace("'", '"')
+
+            # add quotes around unquoted keys: {key: -> {"key":
+            candidate = re.sub(r'([\{,\s])(\w+)\s*:', r'\1"\2":', candidate)
+
+            try:
+                return json.loads(candidate)
+            except Exception:
+                # give up
+                return None
+
+        payload = await _parse_payload(req)
+        if payload is None:
+            # for diagnostics, try to read raw body
+            try:
+                raw = await req.body()
+                raw_text = raw.decode('utf-8', errors='replace')
+            except Exception:
+                raw_text = '<unreadable body>'
+            print(f"[query_pdf] failed to parse payload. raw body:\n{raw_text}")
+            raise HTTPException(status_code=422, detail=f'Invalid or missing JSON body. Received: {raw_text[:1000]}')
+        # Debug log
+        print(f"[query_pdf] parsed payload type={type(payload)} payload=\n{payload}")
 
         try:
             request_model = QueryPDFRequest.parse_obj(payload)
