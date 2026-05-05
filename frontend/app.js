@@ -31,7 +31,12 @@ uploadBtn.addEventListener('click', async () => {
 
 queryBtn.addEventListener('click', async () => {
   queryResult.textContent = 'Querying...'
-  const payload = { query: queryInput.value || '', top_k: 5 }
+  const q = (queryInput.value || '').trim()
+  if (!q) {
+    queryResult.textContent = 'Please enter a query before submitting.'
+    return
+  }
+  const payload = { query: q, top_k: 5 }
   if (sourceInput.value) payload.source = sourceInput.value
 
   try {
