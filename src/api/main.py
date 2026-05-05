@@ -132,11 +132,24 @@ def create_app(orchestrator: Optional[RetrievalOrchestrator] = None) -> FastAPI:
         top_k: int = Field(default=5, ge=1, le=20)
         source: Optional[str] = None
 
+    from fastapi import Request as FastAPIRequest
+
     @app.post('/query_pdf', response_model=QueryResponse)
-    def query_pdf(request: QueryPDFRequest) -> QueryResponse:
+    async def query_pdf(req: FastAPIRequest) -> QueryResponse:
         active_orchestrator = getattr(app.state, 'orchestrator', None)
         if active_orchestrator is None:
             raise HTTPException(status_code=500, detail='Retrieval orchestrator is not available')
+
+        try:
+            payload = await req.json()
+        except Exception:
+            raise HTTPException(status_code=422, detail='Invalid or missing JSON body')
+
+        try:
+            request_model = QueryPDFRequest.parse_obj(payload)
+        except Exception as exc:
+            # return a clearer 422 for missing/invalid fields
+            raise HTTPException(status_code=422, detail=str(exc))
 
         # use retriever with optional metadata filter
         retriever = getattr(active_orchestrator, 'retriever')
@@ -144,14 +157,14 @@ def create_app(orchestrator: Optional[RetrievalOrchestrator] = None) -> FastAPI:
         prompt_builder = getattr(active_orchestrator, 'prompt_builder')
         llm_client = getattr(active_orchestrator, 'llm_client')
 
-        metadata_filter = {'source': request.source} if request.source else None
-        hits = retriever.retrieve(request.query, top_k=request.top_k, metadata_filter=metadata_filter)
-        reranked = reranker.rerank(request.query, hits, top_k=request.top_k)
-        built = prompt_builder.build(request.query, reranked)
+        metadata_filter = {'source': request_model.source} if request_model.source else None
+        hits = retriever.retrieve(request_model.query, top_k=request_model.top_k, metadata_filter=metadata_filter)
+        reranked = reranker.rerank(request_model.query, hits, top_k=request_model.top_k)
+        built = prompt_builder.build(request_model.query, reranked)
         answer = llm_client.generate(built.prompt)
 
         return QueryResponse(
-            query=request.query,
+            query=request_model.query,
             answer=answer,
             prompt=built.prompt,
             citations=built.citations,
