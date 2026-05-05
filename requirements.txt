@@ -8,3 +8,5 @@ fastapi
 instructor
 networkx
 ragas
+python-dotenv
+pytest
