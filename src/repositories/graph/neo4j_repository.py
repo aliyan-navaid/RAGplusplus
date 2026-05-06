@@ -3,6 +3,7 @@ Neo4j implementation of graph database repository
 """
 import logging
 from typing import Optional, List, Dict, Any
+from dataclasses import fields
 from neo4j import Session
 
 from .base_repository import BaseGraphRepository
@@ -22,6 +23,12 @@ class Neo4jRepository(BaseGraphRepository):
     def _get_session(self) -> Session:
         """Get a new Neo4j session."""
         return self.conn_manager.get_session()
+
+    @staticmethod
+    def _entity_from_props(props: Dict[str, Any]) -> EntityNode:
+        allowed = {f.name for f in fields(EntityNode)}
+        filtered = {k: v for k, v in (props or {}).items() if k in allowed}
+        return EntityNode(**filtered)
     
     # ==================== Document Operations ====================
     
@@ -245,7 +252,7 @@ class Neo4jRepository(BaseGraphRepository):
             record = result.single()
             if record:
                 entity_props = dict(record["e"])
-                return EntityNode(**entity_props)
+                return self._entity_from_props(entity_props)
             return None
         finally:
             session.close()
@@ -262,7 +269,7 @@ class Neo4jRepository(BaseGraphRepository):
             record = result.single()
             if record:
                 entity_props = dict(record["e"])
-                return EntityNode(**entity_props)
+                return self._entity_from_props(entity_props)
             return None
         finally:
             session.close()
@@ -331,7 +338,7 @@ class Neo4jRepository(BaseGraphRepository):
             entities = []
             for record in result:
                 entity_props = dict(record["e"])
-                entities.append(EntityNode(**entity_props))
+                entities.append(self._entity_from_props(entity_props))
             return entities
         finally:
             session.close()
@@ -414,7 +421,7 @@ class Neo4jRepository(BaseGraphRepository):
         try:
             query = """
             MATCH (e:Entity)
-            WHERE e.name CONTAINS $name
+            WHERE toLower(e.name) CONTAINS toLower($name)
             RETURN e
             LIMIT $limit
             """
@@ -422,7 +429,7 @@ class Neo4jRepository(BaseGraphRepository):
             entities = []
             for record in result:
                 entity_props = dict(record["e"])
-                entities.append(EntityNode(**entity_props))
+                entities.append(self._entity_from_props(entity_props))
             return entities
         finally:
             session.close()
@@ -440,7 +447,7 @@ class Neo4jRepository(BaseGraphRepository):
             entities = []
             for record in result:
                 entity_props = dict(record["related"])
-                entities.append(EntityNode(**entity_props))
+                entities.append(self._entity_from_props(entity_props))
             return entities
         finally:
             session.close()

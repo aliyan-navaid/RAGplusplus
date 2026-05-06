@@ -123,7 +123,16 @@ def create_app(orchestrator: Optional[RetrievalOrchestrator] = None) -> FastAPI:
             raise HTTPException(status_code=500, detail='Orchestrator missing required components')
 
         from src.services.vector_indexer import index_markdown
+        from src.services.graph_indexer import index_markdown_graph
         ids = index_markdown(markdown, repo, model=embedder, source=source_name)
+
+        graph_repo = getattr(active_orchestrator, "graph_repo", None)
+        if graph_repo is not None:
+            try:
+                index_markdown_graph(markdown, graph_repo, source=source_name, title=source_name)
+            except Exception as exc:
+                # Log graph indexing failures but do not fail the upload
+                print(f"[upload_pdf] graph indexing failed: {exc}")
 
         return UploadResponse(source=source_name, ids=ids)
 

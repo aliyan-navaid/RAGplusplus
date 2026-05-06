@@ -16,11 +16,13 @@ Output: {success, doc_id, entities_created, relationships_created, ...}
 
 import logging
 import hashlib
-from typing import Optional, List, Dict, Tuple
+from typing import Optional
 from datetime import datetime
 
 from ..models import ConvertedDocument
 from .base import BaseStorageStrategy
+from src.repositories.graph.neo4j_repository import Neo4jRepository
+from src.services.graph_indexer import index_markdown_graph
 
 logger = logging.getLogger(__name__)
 
@@ -54,9 +56,7 @@ class GraphStrategy(BaseStorageStrategy):
             graph_uri: Neo4j connection URI (default: local)
         """
         self.graph_uri = graph_uri
-        # TODO: Initialize Neo4j driver here
-        # from neo4j import GraphDatabase
-        # self.driver = GraphDatabase.driver(graph_uri)
+        self.repo = Neo4jRepository()
         logger.info(f"GraphStrategy initialized (URI: {graph_uri})")
     
     def save(self, document: ConvertedDocument) -> dict:
@@ -84,24 +84,25 @@ class GraphStrategy(BaseStorageStrategy):
             # Generate document ID
             doc_id = self._generate_doc_id(document)
             
-            # Step 1: Extract entities (placeholder - would use NLP in real implementation)
-            entities = self._extract_entities(document)
-            logger.info(f"Extracted {len(entities)} entities from document")
-            
-            # Step 2: Extract relationships (placeholder)
-            relationships = self._extract_relationships(document, entities)
-            logger.info(f"Extracted {len(relationships)} relationships")
-            
-            # Step 3: Store in Neo4j (placeholder)
-            # self._create_graph_nodes(doc_id, document, entities, relationships)
-            
+            # Store in Neo4j using the shared graph indexer
+            graph_result = index_markdown_graph(
+                document.markdown_content,
+                graph_repo=self.repo,
+                source=document.source,
+                title=document.title,
+            )
+
             result = {
                 "success": True,
-                "doc_id": doc_id,
-                "entities_created": len(entities),
-                "relationships_created": len(relationships),
+                "doc_id": graph_result.get("doc_id", doc_id),
+                "entities_created": graph_result.get("entities_created", 0),
+                "relationships_created": graph_result.get("relationships_created", 0),
                 "strategy": self.get_strategy_name(),
-                "message": f"Document saved to Graph store ({len(entities)} entities, {len(relationships)} relationships)",
+                "message": (
+                    "Document saved to Graph store ("
+                    f"{graph_result.get('entities_created', 0)} entities, "
+                    f"{graph_result.get('relationships_created', 0)} relationships)"
+                ),
             }
             
             logger.info(f"Graph Strategy: Save successful - {result}")
@@ -125,89 +126,6 @@ class GraphStrategy(BaseStorageStrategy):
         id_source = f"{document.title or 'doc'}_{document.source or 'unknown'}_{datetime.now().isoformat()}"
         doc_id = hashlib.md5(id_source.encode()).hexdigest()[:12]
         return doc_id
-    
-    def _extract_entities(self, document: ConvertedDocument) -> List[Dict[str, str]]:
-        """
-        Extract entities from document.
-        
-        PLACEHOLDER: In real implementation, use:
-        - Named Entity Recognition (spaCy, transformers)
-        - Entity types: PERSON, ORGANIZATION, LOCATION, etc.
-        
-        For now, extracts capitalized phrases as candidates.
-        
-        Args:
-            document: ConvertedDocument to extract entities from
-            
-        Returns:
-            List of entities [{entity: "...", type: "...", source_section: "..."}, ...]
-        """
-        import re
-        
-        entities = []
-        seen = set()
-        
-        # Simple placeholder: extract title-cased phrases (2-3 words)
-        for section in document.sections:
-            content = section.get("content", "")
-            section_title = section.get("title", "")
-            
-            # Find capitalized phrases
-            # This is a simple regex pattern - real implementation would use NER
-            phrases = re.findall(r"\b([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)\b", content)
-            
-            for phrase in phrases:
-                if len(phrase) > 2 and phrase not in seen:
-                    seen.add(phrase)
-                    entities.append({
-                        "entity": phrase,
-                        "type": "ENTITY",  # Would be determined by NER
-                        "section": section_title,
-                    })
-        
-        return entities[:20]  # Limit to 20 for simplicity
-    
-    def _extract_relationships(
-        self,
-        document: ConvertedDocument,
-        entities: List[Dict[str, str]]
-    ) -> List[Dict[str, str]]:
-        """
-        Extract relationships between entities.
-        
-        PLACEHOLDER: In real implementation, use:
-        - Relation extraction models (transformers)
-        - Predicate types: MENTIONS, RELATED_TO, CAUSES, etc.
-        
-        For now, creates simple co-occurrence relationships.
-        
-        Args:
-            document: ConvertedDocument
-            entities: List of extracted entities
-            
-        Returns:
-            List of relationships [{subject: "...", predicate: "...", object: "..."}, ...]
-        """
-        relationships = []
-        
-        # Simple placeholder: entities in same section are related
-        for section in document.sections:
-            section_entities = [
-                e for e in entities
-                if e.get("section") == section.get("title")
-            ]
-            
-            # Create co-occurrence relationships
-            for i, entity1 in enumerate(section_entities):
-                for entity2 in section_entities[i+1:]:
-                    relationships.append({
-                        "subject": entity1["entity"],
-                        "predicate": "CO_OCCURS_WITH",
-                        "object": entity2["entity"],
-                        "section": section.get("title"),
-                    })
-        
-        return relationships[:20]  # Limit to 20 for simplicity
     
     def get_strategy_name(self) -> str:
         """Get strategy name."""

@@ -49,8 +49,31 @@ class EnsembleRetriever:
 
     def _graph_terms(self, query: str) -> List[str]:
         tokens = [token for token in _token_set(query) if len(token) >= 3]
-        tokens.sort(key=len, reverse=True)
-        return tokens[:5]
+        lower_query = (query or "").lower()
+
+        # Expand for common intent words so graph entities (e.g., University, College)
+        # can still be matched even when the query doesn't name them explicitly.
+        expansions: List[str] = []
+        if any(word in lower_query for word in ["study", "studied", "education", "school", "university", "college", "degree"]):
+            expansions.extend(["university", "college", "school", "bachelor", "degree", "education"])
+        if any(word in lower_query for word in ["work", "experience", "job", "intern", "internship"]):
+            expansions.extend(["company", "project", "experience", "internship"])
+        if any(word in lower_query for word in ["skill", "skills", "technology", "tech", "tools"]):
+            expansions.extend(["skills", "languages", "tools", "technologies"])
+
+        combined = tokens + expansions
+        # De-duplicate while preserving order
+        seen = set()
+        ordered: List[str] = []
+        for tok in combined:
+            key = tok.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            ordered.append(tok)
+
+        ordered.sort(key=len, reverse=True)
+        return ordered[:8]
 
     def _graph_hits(self, query: str, top_k: int) -> List[RetrievalHit]:
         if self.graph_repo is None:
@@ -111,6 +134,33 @@ class EnsembleRetriever:
                     )
 
         return hits
+        
+    def _fallback_graph_hits(self, query: str, top_k: int) -> List[RetrievalHit]:
+        if self.graph_repo is None:
+            return []
+        lowered = (query or "").lower()
+        entity_type = None
+        if any(word in lowered for word in ["study", "studied", "education", "school", "university", "college", "degree"]):
+            entity_type = "ORG"
+        try:
+            entities = self.graph_repo.list_entities(entity_type=entity_type, limit=top_k)
+        except Exception:
+            return []
+
+        hits: List[RetrievalHit] = []
+        for entity in entities:
+            name = getattr(entity, "name", "")
+            entity_type_value = getattr(entity, "type", "ENTITY")
+            hits.append(
+                RetrievalHit(
+                    id=str(getattr(entity, "id", name)),
+                    content=f"Entity: {name} ({entity_type_value})",
+                    score=0.25,
+                    source="graph_entity",
+                    metadata={"entity_name": name, "entity_type": entity_type_value, "fallback": True},
+                )
+            )
+        return hits
 
     def _merge_hits(self, hits: Sequence[RetrievalHit]) -> List[RetrievalHit]:
         merged: Dict[str, RetrievalHit] = {}
@@ -121,9 +171,39 @@ class EnsembleRetriever:
                 merged[key] = hit
         return sorted(merged.values(), key=lambda item: item.score, reverse=True)
 
+    def _dedupe_preserve_order(self, hits: Sequence[RetrievalHit]) -> List[RetrievalHit]:
+        seen: set[str] = set()
+        ordered: List[RetrievalHit] = []
+        for hit in hits:
+            key = f"{hit.source}:{hit.id}"
+            if key in seen:
+                continue
+            seen.add(key)
+            ordered.append(hit)
+        return ordered
+
+    def _balanced_hits(self, vector_hits: List[RetrievalHit], graph_hits: List[RetrievalHit], top_k: int) -> List[RetrievalHit]:
+        if not graph_hits:
+            return vector_hits[:top_k]
+        if not vector_hits:
+            return graph_hits[:top_k]
+
+        vector_quota = max(1, top_k // 2)
+        graph_quota = max(1, top_k - vector_quota)
+
+        selected = list(vector_hits[:vector_quota]) + list(graph_hits[:graph_quota])
+        if len(selected) < top_k:
+            selected.extend(vector_hits[vector_quota:])
+            selected.extend(graph_hits[graph_quota:])
+
+        return self._dedupe_preserve_order(selected)[:top_k]
+
     def retrieve(self, query: str, top_k: int = 5, vector_top_k: Optional[int] = None, graph_top_k: Optional[int] = None, metadata_filter: dict | None = None) -> List[RetrievalHit]:
         vector_top_k = vector_top_k or top_k
         graph_top_k = graph_top_k or top_k
         vector_hits = self._vector_hits(query, top_k=vector_top_k, metadata_filter=metadata_filter)
         graph_hits = self._graph_hits(query, top_k=graph_top_k)
-        return self._merge_hits([*vector_hits, *graph_hits])[:top_k]
+        if not graph_hits:
+            graph_hits = self._fallback_graph_hits(query, top_k=graph_top_k)
+        # Return a balanced mix so both sources are considered by the reranker.
+        return self._balanced_hits(vector_hits, graph_hits, top_k=top_k)

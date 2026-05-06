@@ -25,6 +25,7 @@ if str(ROOT) not in sys.path:
 from src.retrieval.orchestrator import RetrievalOrchestrator, build_default_orchestrator
 from src.services.embeddings import EmbeddingModel
 from src.services.vector_indexer import index_markdown
+from src.services.graph_indexer import index_markdown_graph
 from src.services.text_splitter import split_markdown_by_words
 import uuid
 import math
@@ -211,6 +212,10 @@ def run_query(query: str, orchestrator: RetrievalOrchestrator, call_llm: bool = 
     rule("Query Lifecycle")
     panel("User Prompt", query)
 
+    graph_repo = getattr(orchestrator, "graph_repo", None)
+    if VERBOSE:
+        status("Graph", "enabled" if graph_repo is not None else "disabled", "ok" if graph_repo is not None else "warn")
+
     status("Retrieval", "searching vector store...", "info")
     started = time.time()
     hits = orchestrator.retriever.retrieve(query, top_k=5)
@@ -218,6 +223,11 @@ def run_query(query: str, orchestrator: RetrievalOrchestrator, call_llm: bool = 
     status("Retrieval", f"completed in {retrieval_seconds:.2f}s with {len(hits)} hits", "ok")
 
     if VERBOSE:
+        counts = {}
+        for hit in hits:
+            counts[hit.source] = counts.get(hit.source, 0) + 1
+        counts_text = ", ".join([f"{k}={v}" for k, v in counts.items()]) or "(no hits)"
+        panel("Hit Sources", counts_text)
         # Show raw retriever hits
         lines = []
         for i, h in enumerate(hits[:10], start=1):
@@ -336,6 +346,8 @@ def main() -> None:
                         query <question>          retrieval + rerank + streamed LLM answer
                         queryraw <question>       retrieval + rerank + prompt only
                         verbose on/off            toggle verbose pipeline logging
+                        graph status              show graph connection and sample entities
+                        graph <term>              search entities by name in graph
                         models                    show detected Ollama model
                         help                      show this message
                         exit                      quit
@@ -356,6 +368,46 @@ def main() -> None:
         if raw == "verbose off":
             VERBOSE = False
             status("Verbose", "disabled", "ok")
+            continue
+
+        if raw == "graph status":
+            graph_repo = getattr(orchestrator, "graph_repo", None)
+            if graph_repo is None:
+                status("Graph", "disabled (no repo)", "warn")
+                continue
+            try:
+                sample = graph_repo.list_entities(limit=5)
+                lines = []
+                for e in sample:
+                    lines.append(f"id={e.id} name={e.name} type={e.type}")
+                panel("Graph Status", "connected\n" + ("\n".join(lines) if lines else "(no entities)"))
+            except Exception as exc:
+                status("Graph", f"status failed: {exc}", "warn")
+            continue
+
+        if raw.startswith("graph "):
+            term = raw[len("graph "):].strip()
+            if not term:
+                status("Graph", "missing search term", "warn")
+                continue
+            graph_repo = getattr(orchestrator, "graph_repo", None)
+            if graph_repo is None:
+                status("Graph", "disabled (no repo)", "warn")
+                continue
+            try:
+                entities = graph_repo.search_entities_by_name(term, limit=10)
+                lines = []
+                for e in entities:
+                    lines.append(f"id={e.id} name={e.name} type={e.type}")
+                panel("Graph Search", "\n".join(lines) if lines else "(no matches)")
+                if entities:
+                    related = graph_repo.get_related_entities(entities[0].id, limit=5)
+                    rel_lines = []
+                    for r in related:
+                        rel_lines.append(f"id={r.id} name={r.name} type={r.type}")
+                    panel("Graph Related", "\n".join(rel_lines) if rel_lines else "(none)")
+            except Exception as exc:
+                status("Graph", f"search failed: {exc}", "warn")
             continue
 
         if raw.startswith("index "):
@@ -412,10 +464,42 @@ def main() -> None:
                     chunk_ids = orchestrator.vector_repo.add_documents(docs)
                     status("Indexing", f"indexed {len(chunk_ids)} chunks in {time.time() - started:.2f}s", "ok")
                     panel("Indexing Complete", f"Source: {source}\nChunks: {len(chunk_ids)}")
+                    graph_repo = getattr(orchestrator, "graph_repo", None)
+                    if graph_repo is not None:
+                        status("Graph", "extracting entities and relations...", "info")
+                        try:
+                            graph_result = index_markdown_graph(markdown, graph_repo, source=source, title=source)
+                            status(
+                                "Graph",
+                                f"stored {graph_result['entities_created']} entities, {graph_result['relationships_created']} relations",
+                                "ok",
+                            )
+                            if VERBOSE:
+                                panel(
+                                    "Graph Summary",
+                                    f"Document: {graph_result['doc_id']}\n"
+                                    f"Chunks: {graph_result['chunks_created']}\n"
+                                    f"Entities: {graph_result['entities_created']}\n"
+                                    f"Relations: {graph_result['relationships_created']}",
+                                )
+                        except Exception as exc:
+                            status("Graph", f"failed: {exc}", "warn")
                 else:
                     chunk_ids = index_markdown(markdown, orchestrator.vector_repo, model=orchestrator.embedder, source=source)
                     status("Indexing", f"indexed {len(chunk_ids)} chunks in {time.time() - started:.2f}s", "ok")
                     panel("Indexing Complete", f"Source: {source}\nChunks: {len(chunk_ids)}")
+                    graph_repo = getattr(orchestrator, "graph_repo", None)
+                    if graph_repo is not None:
+                        status("Graph", "extracting entities and relations...", "info")
+                        try:
+                            graph_result = index_markdown_graph(markdown, graph_repo, source=source, title=source)
+                            status(
+                                "Graph",
+                                f"stored {graph_result['entities_created']} entities, {graph_result['relationships_created']} relations",
+                                "ok",
+                            )
+                        except Exception as exc:
+                            status("Graph", f"failed: {exc}", "warn")
             except Exception as exc:
                 status("Indexing", str(exc), "error")
                 panel("Chroma Fix", "Set CHROMA_PERSIST_DIRECTORY to a writable path or fix permissions in data/chroma.")
