@@ -1,5 +1,6 @@
 from typing import List, Dict, Any, Tuple, Optional
 from pathlib import Path
+import os
 
 try:
     import chromadb
@@ -21,12 +22,38 @@ class ChromaVectorRepository(VectorRepository):
             raise RuntimeError('chromadb is required for ChromaVectorRepository')
 
         if persist_directory is None:
-            persist_directory = str(Path(__file__).resolve().parents[3] / "data" / "chroma")
+            persist_directory = os.getenv("CHROMA_PERSIST_DIRECTORY")
+            if not persist_directory:
+                persist_directory = str(Path(__file__).resolve().parents[3] / "data" / "chroma")
 
+        allow_in_memory = os.getenv("CHROMA_ALLOW_IN_MEMORY", "0") == "1"
+
+        # If no client provided, try to create a persistent client when a
+        # persist_directory is specified. If the directory exists but is not
+        # writable (e.g., mounted read-only or permission issue), either
+        # fallback to in-memory if explicitly allowed or raise a clear error.
         if client is None:
             if persist_directory:
                 Path(persist_directory).mkdir(parents=True, exist_ok=True)
-                client = chromadb.PersistentClient(path=persist_directory)
+                # quick writability test
+                try:
+                    test_path = Path(persist_directory) / ".chroma_write_test"
+                    with open(test_path, "w") as tf:
+                        tf.write("ok")
+                    test_path.unlink()
+                    client = chromadb.PersistentClient(path=persist_directory)
+                except Exception as e:
+                    if allow_in_memory:
+                        # Fallback to ephemeral in-memory client when persistent
+                        # storage isn't usable. Print a concise warning so CLI/TUI
+                        # users see the cause.
+                        print(f"[WARN] Chroma persist_directory '{persist_directory}' not writable: {e}. Using in-memory store.")
+                        client = chromadb.Client()
+                    else:
+                        raise RuntimeError(
+                            f"Chroma persist_directory not writable: {persist_directory}. "
+                            "Fix permissions or set CHROMA_PERSIST_DIRECTORY to a writable path."
+                        ) from e
             else:
                 client = chromadb.Client()
 
